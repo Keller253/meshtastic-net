@@ -87,15 +87,20 @@ public class MqttProxyCommandHandler : DeviceCommandHandler
 
         var address = container.LocalModuleConfig.Mqtt.Address;
         var host = address.Split(':').FirstOrDefault() ?? container.LocalModuleConfig.Mqtt.Address;
-        var port = address.Contains(':') ? address.Split(':').LastOrDefault() : null;
+        var sPort = address.Contains(':') ? address.Split(':').LastOrDefault() : null;
+        int? port = null;
+        if(Int32.TryParse(sPort, out var p)){
+            port = p;
+        }
 
         if (container.LocalModuleConfig.Mqtt.TlsEnabled)
         {
-            builder = builder.WithTls()
-                .WithTcpServer(host, Int32.Parse(port ?? "8883"));
+            builder = builder.WithTlsOptions(new MqttClientTlsOptions()
+            { IgnoreCertificateChainErrors = true, IgnoreCertificateRevocationErrors = true})
+            .WithTcpServer(host, port ?? 8883);
         }
         else {
-            builder = builder.WithTcpServer(host, Int32.Parse(port ?? "1883"));
+            builder = builder.WithTcpServer(host, port ?? 1883);
         }
 
         if (container.LocalModuleConfig.Mqtt.Username is not null)

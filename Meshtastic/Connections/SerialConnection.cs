@@ -39,7 +39,7 @@ public class SerialConnection : DeviceConnection
 
     public static string[] ListPorts() => SerialPort.GetPortNames();
 
-    public override async Task Monitor()
+    public override Task Monitor()
     {
         Logger.LogDebug("Opening serial port...");
         serialPort.Open();
@@ -59,14 +59,16 @@ public class SerialConnection : DeviceConnection
                 else
                     Logger.LogInformation(line);
             }
-            await Task.Delay(10);
+           // await Task.Delay(10);
+           
         }
         Logger.LogDebug("Disconnected from serial");
+        return Task.CompletedTask;
     }
 
     public override async Task<DeviceStateContainer> WriteToRadio(ToRadio packet, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete)
     {
-        await Task.Delay(1000);
+        //await Task.Delay(1000);
         DeviceStateContainer.AddToRadio(packet);
         var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
         if (!serialPort.IsOpen)
