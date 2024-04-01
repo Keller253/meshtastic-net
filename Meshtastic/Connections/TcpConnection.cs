@@ -32,7 +32,7 @@ public class TcpConnection : DeviceConnection, IDisposable
         DeviceStateContainer = container;
     }
 
-    public override async Task<DeviceStateContainer> WriteToRadio(ToRadio packet, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete)
+    protected override async Task<DeviceStateContainer> WriteToRadio(ToRadio packet, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete)
     {
         DeviceStateContainer.AddToRadio(packet);
         var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
@@ -43,7 +43,7 @@ public class TcpConnection : DeviceConnection, IDisposable
         return DeviceStateContainer;
     }
 
-    public override async Task WriteToRadio(ToRadio packet)
+    protected override async Task WriteToRadio(ToRadio packet)
     {
         DeviceStateContainer.AddToRadio(packet);
         var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
@@ -52,7 +52,7 @@ public class TcpConnection : DeviceConnection, IDisposable
         VerboseLogPacket(packet);
     }
 
-    public override async Task ReadFromRadio(Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete, int readTimeoutMs = Resources.DEFAULT_READ_TIMEOUT)
+    protected override async Task ReadFromRadio(Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete, int readTimeoutMs = Resources.DEFAULT_READ_TIMEOUT)
     {
         if (networkStream == null)
             throw new ApplicationException("Could not establish network stream");
@@ -74,9 +74,10 @@ public class TcpConnection : DeviceConnection, IDisposable
         this.Dispose();
     }
 
-    public void Dispose()
+    public new void Dispose()
     {
         client?.Dispose();
         GC.SuppressFinalize(this);
+        base.Dispose();
     }
 }

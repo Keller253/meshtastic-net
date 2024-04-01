@@ -4,111 +4,244 @@ using Meshtastic.Protobufs;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.IO.Ports;
+using System.Reflection.Metadata;
 
 namespace Meshtastic.Connections;
 
 public class SerialConnection : DeviceConnection
 {
     private readonly SerialPort serialPort;
+    private SemaphoreSlim serialPortSemaphore = new(1);
 
     public SerialConnection(ILogger logger, string port, int baudRate = Resources.DEFAULT_BAUD_RATE) : base(logger)
     {
         serialPort = new SerialPort(port, baudRate)
         {
-            DtrEnable = true,
-            Handshake = Handshake.XOnXOff,
-            WriteBufferSize = 8,
+            //DtrEnable = true,
+            Handshake = Handshake.None,
+            // WriteBufferSize = 8,
+            // DataBits = 8, Parity = Parity.Even, StopBits = StopBits.One
         };
     }
 
-    public SerialConnection(ILogger logger, 
-        string port, 
-        DeviceStateContainer container, 
-        bool dtrEnable = true, 
-        Handshake handshake = Handshake.XOnXOff, 
+    public SerialConnection(ILogger logger,
+        string port,
+        DeviceStateContainer container,
+        bool dtrEnable = true,
+        Handshake handshake = Handshake.None,
         int baudRate = Resources.DEFAULT_BAUD_RATE) : base(logger)
     {
         serialPort = new SerialPort(port, baudRate)
         {
-            DtrEnable = dtrEnable,
+            DtrEnable = false,
             Handshake = handshake,
             WriteBufferSize = 8,
+            //DataBits = 8,
+            //Parity = Parity.None,
+            //StopBits = StopBits.One
         };
         DeviceStateContainer = container;
     }
 
     public static string[] ListPorts() => SerialPort.GetPortNames();
 
-    public override Task Monitor()
+    public override async Task Monitor()
     {
-        Logger.LogDebug("Opening serial port...");
-        serialPort.Open();
-        while (serialPort.IsOpen)
+        var gotSemaphore = false;
+
+        try
         {
-            if (serialPort.BytesToRead > 0)
+            await serialPortSemaphore.WaitAsync(ShowStopper.Token);
+            ShowStopper.Token.ThrowIfCancellationRequested();
+            gotSemaphore = true;
+            Logger.LogDebug("Opening serial port...");
+            serialPort.Open();
+            while (serialPort.IsOpen)
             {
-                var line = serialPort.ReadLine();
-                if (line.Contains("INFO  |"))
-                    Logger.LogInformation(line);
-                else if (line.Contains("WARN  |"))
-                    Logger.LogWarning(line);
-                else if (line.Contains("DEBUG |"))
-                    Logger.LogDebug(line);
-                else if (line.Contains("ERROR |"))
-                    Logger.LogError(line);
-                else
-                    Logger.LogInformation(line);
+                if (serialPort.BytesToRead > 0)
+                {
+                    var line = serialPort.ReadLine();
+                    if (line.Contains("INFO  |"))
+                        Logger.LogInformation(line);
+                    else if (line.Contains("WARN  |"))
+                        Logger.LogWarning(line);
+                    else if (line.Contains("DEBUG |"))
+                        Logger.LogDebug(line);
+                    else if (line.Contains("ERROR |"))
+                        Logger.LogError(line);
+                    else
+                        Logger.LogInformation(line);
+                }
+                // await Task.Delay(10);
+
             }
-           // await Task.Delay(10);
-           
+            Logger.LogDebug("Disconnected from serial");
+
         }
-        Logger.LogDebug("Disconnected from serial");
-        return Task.CompletedTask;
+        catch (OperationCanceledException)
+        {
+            // no need to do anything if cancelled
+        }
+        finally
+        {
+            if (gotSemaphore)
+            {
+                serialPortSemaphore.Release();
+            }
+        }
     }
 
-    public override async Task<DeviceStateContainer> WriteToRadio(ToRadio packet, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete)
+    protected override async Task<DeviceStateContainer> WriteToRadio(ToRadio packet, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete)
     {
-        //await Task.Delay(1000);
-        DeviceStateContainer.AddToRadio(packet);
-        var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
-        if (!serialPort.IsOpen)
-            serialPort.Open();
-        await serialPort.BaseStream.WriteAsync(PacketFraming.SERIAL_PREAMBLE.AsMemory(0, PacketFraming.SERIAL_PREAMBLE.Length));
-        await serialPort.BaseStream.WriteAsync(toRadio);
-        VerboseLogPacket(packet);
-        await ReadFromRadio(isComplete);
+        var gotSemaphore = false;
+        try
+        {
+            // if (serialPortSemaphore.CurrentCount == 0)
+            //     Logger.LogInformation($"Waiting for semaphore to write2");
+            //await serialPortSemaphore.WaitAsync(ShowStopper.Token);
+            ShowStopper.Token.ThrowIfCancellationRequested();
+            //gotSemaphore = true;
+            //Logger.LogInformation($"Got semaphore for write2");
+            DeviceStateContainer.AddToRadio(packet);
+            var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
+            if (!serialPort.IsOpen)
+                serialPort.Open();
+            await serialPort.BaseStream.WriteAsync(PacketFraming.SERIAL_PREAMBLE.AsMemory(0, PacketFraming.SERIAL_PREAMBLE.Length));
+            await serialPort.BaseStream.WriteAsync(toRadio);
+            VerboseLogPacket(packet);
+            await ReadFromRadio(isComplete, Resources.DEFAULT_READ_TIMEOUT, true);
+        }
+        catch (OperationCanceledException)
+        {
+            // no need to do anything if cancelled
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError($"Error writing to radio: {ex}");
+        }
+        finally
+        {
+            if (gotSemaphore)
+            {
+                serialPortSemaphore.Release();
+                Logger.LogInformation($"Release semaphore from write2");
+            }
+        }
         return DeviceStateContainer;
     }
 
+    public override async Task Start()
+    {
+        if (!serialPort.IsOpen)
+            serialPort.Open();
+        while (!serialPort.IsOpen)
+        {
+            await Task.Delay(100);
+        }
+       
+
+        // Write some garbage to wake the device and force a resync
+        var writtenBytes = 0;
+
+        while (writtenBytes < 32)
+        {
+            serialPort.BaseStream.WriteByte(PacketFraming.PACKET_FRAME_START[1]);
+            writtenBytes++;
+        }
+        await serialPort.BaseStream.FlushAsync();
+        await Task.Delay(200);
+
+        await base.Start();
+    }
     public override void Disconnect()
     {
         serialPort.Close();
     }
 
-    public override async Task WriteToRadio(ToRadio packet)
+    protected override async Task WriteToRadio(ToRadio packet)
     {
-        DeviceStateContainer.AddToRadio(packet);
-        var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
-        await serialPort.BaseStream.WriteAsync(toRadio);
-        await serialPort.BaseStream.FlushAsync();
-        VerboseLogPacket(packet);
+        var gotSemaphore = false;
+        try
+        {
+            //if (serialPortSemaphore.CurrentCount == 0)
+            //    Logger.LogInformation($"Waiting for semaphore to write");
+            //await serialPortSemaphore.WaitAsync(ShowStopper.Token);
+            //gotSemaphore = true;
+
+            //Logger.LogInformation($"Got semaphore for write");
+            DeviceStateContainer.AddToRadio(packet);
+            if (!serialPort.IsOpen)
+                serialPort.Open();
+            var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
+            await serialPort.BaseStream.WriteAsync(toRadio);
+            await serialPort.BaseStream.FlushAsync();
+            VerboseLogPacket(packet);
+        }
+        catch (OperationCanceledException)
+        {
+
+            Logger.LogWarning($"Write operation cancelled");
+        }
+        finally
+        {
+            if (gotSemaphore)
+            {
+                serialPortSemaphore.Release();
+                Logger.LogInformation($"Released semaphore from write");
+            }
+        }
     }
 
-    public override async Task ReadFromRadio(Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete, int readTimeoutMs = Resources.DEFAULT_READ_TIMEOUT)
+    protected override async Task ReadFromRadio(Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete, int readTimeoutMs = Resources.DEFAULT_READ_TIMEOUT)
     {
-        var sw = new Stopwatch();
+        await ReadFromRadio(isComplete, readTimeoutMs, false);
+    }
 
-        while (serialPort.IsOpen && sw.ElapsedMilliseconds < readTimeoutMs)
+    protected async Task ReadFromRadio(Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete, int readTimeoutMs, bool unSafe = false)
+    {
+        var gotSemaphore = false;
+        try
         {
-            if (serialPort.BytesToRead == 0)
+            // if (!unSafe)
+            // {
+            //     if (serialPortSemaphore.CurrentCount == 0)
+            //         Logger.LogInformation($"Waiting for semaphore to read");
+
+            //    await serialPortSemaphore.WaitAsync(ShowStopper.Token);
+            //     gotSemaphore = true;
+            //     Logger.LogInformation($"Got semaphore for read...");
+            // }
+
+            var sw = new Stopwatch();
+            sw.Start();
+            while (serialPort.IsOpen)
             {
-                await Task.Delay(10);
-                continue;
+                if (serialPort.BytesToRead == 0)
+                {
+                    await Task.Delay(10);
+                    continue;
+                }
+                var buffer = new byte[1];
+                await serialPort.BaseStream.ReadAsync(buffer);
+                if (await ParsePackets(buffer.First(), isComplete))
+                    return;
             }
-            var buffer = new byte[1];
-            await serialPort.BaseStream.ReadAsync(buffer);
-            if (await ParsePackets(buffer.First(), isComplete))
-                return;
+        }
+        catch (OperationCanceledException)
+        {
+            Logger.LogInformation($"Read from radio cancelled");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning($"Exception reading from radio: {ex}");
+        }
+        finally
+        {
+            if (gotSemaphore)
+            {
+                Logger.LogInformation($"Releasing semaphore from read");
+                serialPortSemaphore.Release();
+            }
         }
     }
 }

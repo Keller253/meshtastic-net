@@ -112,6 +112,8 @@ public class AdminMessageFactory
         return GetNewMeshPacket(new AdminMessage() { SetChannel = channel });
     }
 
+    
+
     public MeshPacket CreateGetMetadataMessage()
     {
         return GetNewMeshPacket(new AdminMessage() { GetDeviceMetadataRequest = true });

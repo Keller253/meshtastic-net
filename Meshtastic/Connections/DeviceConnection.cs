@@ -10,10 +10,10 @@ namespace Meshtastic.Connections;
 
 public class MessageRecievedEventArgs : EventArgs
 {
-    #nullable disable
-    public DeviceStateContainer DeviceStateContainer {get; set;}
+#nullable disable
+    public DeviceStateContainer DeviceStateContainer { get; set; }
     public FromRadio Message;
-    #nullable enable
+#nullable enable
 
     public MessageRecievedEventArgs()
     {
@@ -22,11 +22,12 @@ public class MessageRecievedEventArgs : EventArgs
 
 public abstract class DeviceConnection(ILogger logger) : IDisposable
 {
-    public event EventHandler<MessageRecievedEventArgs> MessageRecieved;
+    public event EventHandler<MessageRecievedEventArgs>? MessageRecieved;
 
     private ConcurrentQueue<ToRadio> SendQueue = new();
-    private Task QueueTask = null;
-    private Task ListenTask = null;
+    private Task? QueueTask = null;
+    private bool queueRunning = false;
+    private Task? ListenTask = null;
     protected CancellationTokenSource ShowStopper = new();
     private bool disposedValue;
 
@@ -50,16 +51,21 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
     {
         SendQueue.Enqueue(toRadio);
 
-        if (QueueTask == null || QueueTask.IsCompleted || QueueTask.IsFaulted)
+        if (QueueTask == null || QueueTask.IsCompleted || QueueTask.IsFaulted || !queueRunning)
         {
             try
             {
                 QueueTask = Task.Run(async () =>
                 {
+                    queueRunning = true;
                     while (SendQueue.TryDequeue(out var item) && !ShowStopper.IsCancellationRequested)
                     {
+                        Logger.LogInformation($"Sending queued message");
                         await WriteToRadio(toRadio);
+                        Logger.LogInformation($"Finished sending queued message");
                     }
+                    queueRunning = false;
+                    return true;
                 }, ShowStopper.Token);
             }
             catch (Exception ex)
@@ -75,30 +81,62 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
 
     public abstract void Disconnect();
 
-    public async Task Start()
+    public virtual async Task Start()
     {
         ShowStopper.TryReset();
 
         if (ListenTask == null || ListenTask.IsCompleted)
         {
             var messageFactory = new ToRadioMessageFactory();
-            var wantConfig = messageFactory.CreateWantConfigMessage();
-            await WriteToRadio(wantConfig);
+            var configId = Convert.ToUInt32(Math.Abs(Random.Shared.Next()));
+            var wantConfig = new ToRadio() { WantConfigId = configId };//messageFactory.CreateWantConfigMessage();
+            var mp = new MeshPacket()
+            {
+                Channel = 20,
+                WantAck = true,
+                Decoded = new Protobufs.Data()
+                {
+                    Dest = uint.MaxValue,
+                    WantResponse = true,
+                
+                    
+                }
+            };
+            //wantConfig.Packet = mp;
+            //  var sc =  new AdminMessageFactory().CreateSetChannelMessage
+            Logger.LogInformation("Writing want config");
 
-            ListenTask = Task.Run(() =>
+            // , (fromRadio, deviceStateContainer) =>
+            // {
+            //     Logger.LogInformation($"Got Configuration {++config}");
+            //     if (fromRadio.PayloadVariantCase != FromRadio.PayloadVariantOneofCase.ConfigCompleteId)
+            //         return Task.FromResult(false);
+
+            //     return Task.FromResult(true);
+            // });
+
+            ListenTask = Task.Run(async () =>
             {
                 while (!ShowStopper.IsCancellationRequested)
                 {
-                    ReadFromRadio((fromRadio, deviceStateContainer) => 
+                    while (!SendQueue.IsEmpty) // allows semaphore to stay open 
                     {
-                        MessageRecieved?.Invoke(this, new MessageRecievedEventArgs(){
+                        await Task.Delay(100);
+                    }
+
+                    await ReadFromRadio((fromRadio, deviceStateContainer) =>
+                    {
+                        MessageRecieved?.Invoke(this, new MessageRecievedEventArgs()
+                        {
                             Message = fromRadio,
-                             DeviceStateContainer = deviceStateContainer
+                            DeviceStateContainer = deviceStateContainer
                         });
-                        return Task.FromResult(true);
+                        return Task.FromResult(false);
                     });
-                }                
+
+                }
             }, ShowStopper.Token);
+            await WriteToRadio(wantConfig);
         }
     }
 
@@ -106,6 +144,7 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
     {
         ShowStopper.Cancel();
         await Task.WhenAll((new Task[] { ListenTask, QueueTask }).Where(t => t != null));
+        Disconnect();
     }
 
     protected abstract Task ReadFromRadio(Func<FromRadio?, DeviceStateContainer, Task<bool>> isComplete,

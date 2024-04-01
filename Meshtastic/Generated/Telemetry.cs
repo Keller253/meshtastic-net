@@ -2062,7 +2062,7 @@ namespace Meshtastic.Protobufs {
     public const int PowerMetricsFieldNumber = 5;
     /// <summary>
     ///
-    /// Power Metrics 
+    /// Power Metrics
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]

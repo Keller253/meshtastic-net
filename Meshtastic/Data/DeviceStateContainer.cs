@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Google.Protobuf;
 using Meshtastic.Protobufs;
 
@@ -10,8 +11,8 @@ public class DeviceStateContainer
     public List<Channel> Channels;
     public MyNodeInfo MyNodeInfo;
     public List<NodeInfo> Nodes;
-    public List<FromRadio> FromRadioMessageLog;
-    public List<ToRadio> ToRadioMessageLog;
+    public ConcurrentBag<FromRadio> FromRadioMessageLog;
+    public ConcurrentBag<ToRadio> ToRadioMessageLog;
     public DeviceMetadata Metadata;
 
     public DeviceStateContainer()
@@ -21,8 +22,8 @@ public class DeviceStateContainer
         this.Channels = new List<Channel>();
         this.MyNodeInfo = new MyNodeInfo();
         this.Nodes = new List<NodeInfo>();
-        this.ToRadioMessageLog = new List<ToRadio>();
-        this.FromRadioMessageLog = new List<FromRadio>();
+        this.ToRadioMessageLog = new ConcurrentBag<ToRadio>();
+        this.FromRadioMessageLog = new ConcurrentBag<FromRadio>();
         this.Metadata = new DeviceMetadata();
     }
 
@@ -60,7 +61,7 @@ public class DeviceStateContainer
         if (fromRadio.PayloadVariantCase == FromRadio.PayloadVariantOneofCase.Metadata)
             this.Metadata = fromRadio.Metadata;
 
-        this.FromRadioMessageLog.Insert(0, fromRadio);
+        this.FromRadioMessageLog.Add(fromRadio);
     }
 
     public void AddToRadio(ToRadio toRadio)
