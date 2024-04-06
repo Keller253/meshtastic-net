@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography.X509Certificates;
 using Meshtastic.Data;
 using Meshtastic.Data.MessageFactories;
@@ -7,18 +8,6 @@ using Meshtastic.Protobufs;
 using Microsoft.Extensions.Logging;
 
 namespace Meshtastic.Connections;
-
-public class MessageRecievedEventArgs : EventArgs
-{
-#nullable disable
-    public DeviceStateContainer DeviceStateContainer { get; set; }
-    public FromRadio Message;
-#nullable enable
-
-    public MessageRecievedEventArgs()
-    {
-    }
-}
 
 public abstract class DeviceConnection(ILogger logger) : IDisposable
 {
@@ -55,24 +44,28 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
         {
             try
             {
-                QueueTask = Task.Run(async () =>
-                {
-                    queueRunning = true;
-                    while (SendQueue.TryDequeue(out var item) && !ShowStopper.IsCancellationRequested)
-                    {
-                        Logger.LogInformation($"Sending queued message");
-                        await WriteToRadio(toRadio);
-                        Logger.LogInformation($"Finished sending queued message");
-                    }
-                    queueRunning = false;
-                    return true;
-                }, ShowStopper.Token);
+                QueueTask = Task.Run(ProcessQueue, ShowStopper.Token);
             }
             catch (Exception ex)
             {
                 Logger.LogError($"Error sending message: {ex.Message}");
             }
         }
+    }
+
+    private async Task ProcessQueue()
+    {
+            queueRunning = true;
+            while (!SendQueue.IsEmpty && !ShowStopper.IsCancellationRequested)
+            {
+                if (SendQueue.TryDequeue(out var toRadio))
+                {
+                    Logger.LogInformation($"Sending queued message");
+                    await WriteToRadio(toRadio);
+                    Logger.LogInformation($"Finished sending queued message");
+                }
+            }
+            queueRunning = false;
     }
 
     protected abstract Task<DeviceStateContainer> WriteToRadio(ToRadio toRadio, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete);
@@ -98,22 +91,10 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
                 {
                     Dest = uint.MaxValue,
                     WantResponse = true,
-                
-                    
                 }
             };
-            //wantConfig.Packet = mp;
-            //  var sc =  new AdminMessageFactory().CreateSetChannelMessage
+
             Logger.LogInformation("Writing want config");
-
-            // , (fromRadio, deviceStateContainer) =>
-            // {
-            //     Logger.LogInformation($"Got Configuration {++config}");
-            //     if (fromRadio.PayloadVariantCase != FromRadio.PayloadVariantOneofCase.ConfigCompleteId)
-            //         return Task.FromResult(false);
-
-            //     return Task.FromResult(true);
-            // });
 
             ListenTask = Task.Run(async () =>
             {
@@ -133,7 +114,6 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
                         });
                         return Task.FromResult(false);
                     });
-
                 }
             }, ShowStopper.Token);
             await WriteToRadio(wantConfig);

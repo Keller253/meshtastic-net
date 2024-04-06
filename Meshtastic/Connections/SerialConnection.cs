@@ -17,10 +17,7 @@ public class SerialConnection : DeviceConnection
     {
         serialPort = new SerialPort(port, baudRate)
         {
-            //DtrEnable = true,
             Handshake = Handshake.None,
-            // WriteBufferSize = 8,
-            // DataBits = 8, Parity = Parity.Even, StopBits = StopBits.One
         };
     }
 
@@ -36,9 +33,6 @@ public class SerialConnection : DeviceConnection
             DtrEnable = false,
             Handshake = handshake,
             WriteBufferSize = 8,
-            //DataBits = 8,
-            //Parity = Parity.None,
-            //StopBits = StopBits.One
         };
         DeviceStateContainer = container;
     }
@@ -93,15 +87,9 @@ public class SerialConnection : DeviceConnection
 
     protected override async Task<DeviceStateContainer> WriteToRadio(ToRadio packet, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete)
     {
-        var gotSemaphore = false;
         try
         {
-            // if (serialPortSemaphore.CurrentCount == 0)
-            //     Logger.LogInformation($"Waiting for semaphore to write2");
-            //await serialPortSemaphore.WaitAsync(ShowStopper.Token);
             ShowStopper.Token.ThrowIfCancellationRequested();
-            //gotSemaphore = true;
-            //Logger.LogInformation($"Got semaphore for write2");
             DeviceStateContainer.AddToRadio(packet);
             var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
             if (!serialPort.IsOpen)
@@ -119,14 +107,7 @@ public class SerialConnection : DeviceConnection
         {
             Logger.LogError($"Error writing to radio: {ex}");
         }
-        finally
-        {
-            if (gotSemaphore)
-            {
-                serialPortSemaphore.Release();
-                Logger.LogInformation($"Release semaphore from write2");
-            }
-        }
+                
         return DeviceStateContainer;
     }
 
@@ -138,7 +119,6 @@ public class SerialConnection : DeviceConnection
         {
             await Task.Delay(100);
         }
-       
 
         // Write some garbage to wake the device and force a resync
         var writtenBytes = 0;
@@ -160,15 +140,8 @@ public class SerialConnection : DeviceConnection
 
     protected override async Task WriteToRadio(ToRadio packet)
     {
-        var gotSemaphore = false;
         try
-        {
-            //if (serialPortSemaphore.CurrentCount == 0)
-            //    Logger.LogInformation($"Waiting for semaphore to write");
-            //await serialPortSemaphore.WaitAsync(ShowStopper.Token);
-            //gotSemaphore = true;
-
-            //Logger.LogInformation($"Got semaphore for write");
+        {            
             DeviceStateContainer.AddToRadio(packet);
             if (!serialPort.IsOpen)
                 serialPort.Open();
@@ -179,16 +152,7 @@ public class SerialConnection : DeviceConnection
         }
         catch (OperationCanceledException)
         {
-
             Logger.LogWarning($"Write operation cancelled");
-        }
-        finally
-        {
-            if (gotSemaphore)
-            {
-                serialPortSemaphore.Release();
-                Logger.LogInformation($"Released semaphore from write");
-            }
         }
     }
 
@@ -201,17 +165,7 @@ public class SerialConnection : DeviceConnection
     {
         var gotSemaphore = false;
         try
-        {
-            // if (!unSafe)
-            // {
-            //     if (serialPortSemaphore.CurrentCount == 0)
-            //         Logger.LogInformation($"Waiting for semaphore to read");
-
-            //    await serialPortSemaphore.WaitAsync(ShowStopper.Token);
-            //     gotSemaphore = true;
-            //     Logger.LogInformation($"Got semaphore for read...");
-            // }
-
+        {            
             var sw = new Stopwatch();
             sw.Start();
             while (serialPort.IsOpen)

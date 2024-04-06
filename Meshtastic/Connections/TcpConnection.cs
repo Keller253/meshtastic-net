@@ -32,11 +32,17 @@ public class TcpConnection : DeviceConnection, IDisposable
         DeviceStateContainer = container;
     }
 
+    public override async Task Start()
+    {
+        networkStream ??= client.GetStream();
+        await base.Start();
+    }
+
     protected override async Task<DeviceStateContainer> WriteToRadio(ToRadio packet, Func<FromRadio, DeviceStateContainer, Task<bool>> isComplete)
     {
         DeviceStateContainer.AddToRadio(packet);
         var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
-        networkStream = client.GetStream();
+        networkStream ??= client.GetStream();
         await networkStream.WriteAsync(toRadio);
         VerboseLogPacket(packet);
         await ReadFromRadio(isComplete);
@@ -47,6 +53,7 @@ public class TcpConnection : DeviceConnection, IDisposable
     {
         DeviceStateContainer.AddToRadio(packet);
         var toRadio = PacketFraming.CreatePacket(packet.ToByteArray());
+        networkStream ??= client.GetStream();
         await networkStream!.WriteAsync(toRadio);
         await networkStream.FlushAsync();
         VerboseLogPacket(packet);
