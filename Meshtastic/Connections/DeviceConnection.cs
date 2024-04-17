@@ -107,11 +107,16 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
 
                     await ReadFromRadio((fromRadio, deviceStateContainer) =>
                     {
+                        try{
                         MessageRecieved?.Invoke(this, new MessageRecievedEventArgs()
                         {
                             Message = fromRadio,
                             DeviceStateContainer = deviceStateContainer
                         });
+                        }
+                        catch(Exception ex){
+                            Logger.LogWarning($"Exception processing message: {ex}");
+                        }
                         return Task.FromResult(false);
                     });
                 }
@@ -161,7 +166,7 @@ public abstract class DeviceConnection(ILogger logger) : IDisposable
                     if (fromRadio.GetPayload<Telemetry>() != null)
                     {
                         Logger.LogDebug($"Sending heartbeat");
-                        await WriteToRadio(ToRadioFactory.CreateKeepAliveMessage());
+                        Send(ToRadioFactory.CreateKeepAliveMessage());
                     }
 
                     if (await isComplete(fromRadio, DeviceStateContainer))
